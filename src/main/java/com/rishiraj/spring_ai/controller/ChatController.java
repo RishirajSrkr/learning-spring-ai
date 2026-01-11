@@ -2,7 +2,9 @@ package com.rishiraj.spring_ai.controller;
 
 
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
+import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -13,14 +15,16 @@ import org.springframework.ai.converter.ListOutputConverter;
 import org.springframework.ai.converter.MapOutputConverter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.SignatureSpi;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -32,11 +36,15 @@ public class ChatController {
     private final Resource tweetSystemMessage;
 
     public ChatController(ChatClient.Builder client,
-                          @Value("classpath:prompts/tweet-system-message.st")
-                          Resource tweetSystemMessage){
+                          @Value("classpath:prompts/tweet-system-message.st") Resource tweetSystemMessage,
+                          ChatMemory chatMemory
+    ){
 
         this.client = client
-                .defaultAdvisors(new SimpleLoggerAdvisor())
+                .defaultAdvisors(
+                        MessageChatMemoryAdvisor.builder(chatMemory).build(),
+                        new SimpleLoggerAdvisor()
+                )
                 .build();
         this.tweetSystemMessage = tweetSystemMessage;
     }
@@ -155,6 +163,33 @@ public class ChatController {
        return beanOutputConverter.convert(content);
 
   
+
+    }
+
+    //chat memory
+    @PostMapping("/chat")
+    public ResponseEntity<String> chat(
+            @RequestBody String input,
+            @CookieValue(name = "X-CONV-ID", required = false) String convId
+
+    ){
+        String conversationId = convId == null ? UUID.randomUUID().toString() : convId;
+        var response = client.prompt()
+                .user(input)
+                .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, conversationId))
+                .call()
+                .content();
+
+        ResponseCookie cookie = ResponseCookie
+                .from("X-CONV-ID", conversationId)
+                .path("/")
+                .maxAge(3600)
+                .build();
+
+        return ResponseEntity
+                .ok()
+                .header(HttpHeaders.SET_COOKIE, cookie.toString())
+                .body(response);
 
     }
 
